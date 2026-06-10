@@ -291,3 +291,102 @@ Freshness / version → Volume & errors → Schema & contract → Lineage / run_
 - Lab Day 09 (orchestration): [`../../day09/lab/README.md`](../../day09/lab/README.md)
 - Great Expectations (tuỳ chọn nâng cao): https://docs.greatexpectations.io/
 - ChromaDB: https://docs.trychroma.com/
+
+---
+
+## Những gì đã làm
+
+### 1. Hoàn thiện pipeline ETL
+
+- Đã chạy pipeline với `run_id=day10-final`.
+- Pipeline đọc dữ liệu từ `data/raw/policy_export_dirty.csv`, clean dữ liệu, validate expectation, tạo cleaned CSV, quarantine CSV, manifest, log và index phục vụ retrieval.
+- Kết quả run cuối:
+  - `raw_records`: 247
+  - `cleaned_records`: 37
+  - `quarantine_records`: 210
+  - `latest_exported_at`: `2026-04-11T00:00:00`
+- Artifact chính:
+  - `artifacts/cleaned/cleaned_day10-final.csv`
+  - `artifacts/quarantine/quarantine_day10-final.csv`
+  - `artifacts/logs/run_day10-final.log`
+  - `artifacts/manifests/manifest_day10-final.json`
+  - `artifacts/simple_index/day10_kb.json`
+
+### 2. Sửa và mở rộng cleaning rules
+
+- Đã mở rộng allowlist để xử lý đủ 5 nguồn tài liệu hợp lệ:
+  - `policy_refund_v4`
+  - `sla_p1_2026`
+  - `it_helpdesk_faq`
+  - `hr_leave_policy`
+  - `access_control_sop`
+- Đã thêm/sử dụng các rule làm sạch dữ liệu:
+  - Quarantine `doc_id` không thuộc allowlist.
+  - Chuẩn hóa `effective_date` về định dạng `YYYY-MM-DD`.
+  - Quarantine dòng thiếu hoặc sai định dạng `effective_date`.
+  - Quarantine `exported_at` sai định dạng ISO.
+  - Loại bỏ bản HR cũ trước năm 2026.
+  - Loại bỏ nội dung HR 2025 còn ghi `10 ngày phép năm`.
+  - Loại bỏ chunk rỗng, nội dung mơ hồ và chunk trùng lặp.
+  - Sửa stale refund window từ `14 ngày làm việc` về `7 ngày làm việc`.
+
+### 3. Bổ sung expectation suite
+
+- Đã validate cleaned data trước khi publish index.
+- Các expectation quan trọng đã có:
+  - Có ít nhất 1 dòng sau clean.
+  - Không có `doc_id` rỗng.
+  - Không còn chính sách hoàn tiền stale `14 ngày làm việc`.
+  - `effective_date` đúng định dạng ISO date.
+  - Không còn nội dung HR cũ `10 ngày phép năm`.
+  - Đủ 5 `doc_id` bắt buộc cho bộ câu hỏi grading.
+  - Không publish nội dung mơ hồ vào index.
+  - `exported_at` parse được theo ISO datetime.
+
+### 4. Kiểm thử before/after retrieval
+
+- Đã tạo run lỗi có chủ đích:
+
+```bash
+uv run python etl_pipeline.py run --run-id inject-bad --no-refund-fix --skip-validate
+```
+
+- File eval sau khi inject dữ liệu xấu:
+  - `artifacts/eval/after_inject_bad.csv`
+  - Dùng để chứng minh stale context vẫn có thể bị retrieval lấy ra nếu bỏ qua validate/fix.
+- Sau khi chạy lại pipeline chuẩn, file eval tốt:
+  - `artifacts/eval/after_fix_eval.csv`
+  - 21/21 câu tự kiểm có `contains_expected=yes`, `hits_forbidden=no`, `top1_doc_expected=yes`.
+
+### 5. Kết quả grading chính thức
+
+- Đã chạy:
+
+```bash
+uv run python grading_run.py --out artifacts/eval/grading_run.jsonl
+```
+
+- Kết quả trong `artifacts/eval/grading_run.jsonl`:
+  - 10/10 câu grading pass.
+  - Tất cả câu có `contains_expected=true`.
+  - Tất cả câu có `hits_forbidden=false`.
+  - Tất cả câu có `top1_doc_matches=true`.
+- Các case quan trọng đã pass:
+  - Chính sách hoàn tiền dùng `7 ngày làm việc`, không dùng stale `14 ngày`.
+  - SLA P1 trả về đúng thông tin phản hồi, resolution và auto escalate.
+  - IT Helpdesk FAQ trả lời đúng khóa tài khoản và giới hạn VPN.
+  - HR policy 2026 trả lời đúng `12 ngày phép năm`, không lấy bản cũ `10 ngày`.
+  - Access control trả lời đúng Level 4 Admin Access cần IT Manager/CISO phê duyệt.
+
+### 6. Monitoring và tài liệu
+
+- Đã có manifest lưu lineage cho run cuối tại `artifacts/manifests/manifest_day10-final.json`.
+- Đã có freshness check dựa trên `latest_exported_at`.
+- Với snapshot lab hiện tại, freshness có thể báo `FAIL` vì dữ liệu export mới nhất là `2026-04-11T00:00:00`, trong khi ngày chạy là `2026-06-10`.
+- Đã hoàn thiện các tài liệu/báo cáo chính:
+  - `docs/pipeline_architecture.md`
+  - `docs/data_contract.md`
+  - `docs/runbook.md`
+  - `docs/quality_report_template.md`
+  - `reports/group_report.md`
+  - `reports/individual/student.md`
