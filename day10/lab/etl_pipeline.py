@@ -31,6 +31,11 @@ from transform.cleaning_rules import clean_rows, load_raw_csv, write_cleaned_csv
 
 load_dotenv()
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent
 RAW_DEFAULT = ROOT / "data" / "raw" / "policy_export_dirty.csv"
 ART = ROOT / "artifacts"
@@ -114,6 +119,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         "no_refund_fix": bool(args.no_refund_fix),
         "skipped_validate": bool(args.skip_validate and halt),
         "cleaned_csv": str(cleaned_path.relative_to(ROOT)),
+        "simple_index": str((ART / "simple_index" / f"{os.environ.get('CHROMA_COLLECTION', 'day10_kb')}.json").relative_to(ROOT)),
         "chroma_path": os.environ.get("CHROMA_DB_PATH", "./chroma_db"),
         "chroma_collection": os.environ.get("CHROMA_COLLECTION", "day10_kb"),
     }
@@ -129,12 +135,28 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_embed_internal(cleaned_csv: Path, *, run_id: str, log) -> bool:
+    from transform.cleaning_rules import load_raw_csv as load_csv  # same loader
+
+    rows = load_csv(cleaned_csv)
+    if not rows:
+        log("WARN: cleaned CSV empty - no rows to embed.")
+        return True
+
+    fallback_index = ART / "simple_index" / f"{os.environ.get('CHROMA_COLLECTION', 'day10_kb')}.json"
+    try:
+        from simple_retrieval import write_index
+
+        write_index(fallback_index, rows, run_id=run_id)
+        log(f"simple_index_written={fallback_index.relative_to(ROOT)}")
+    except Exception as e:
+        log(f"WARN: simple index write skipped: {e}")
+
     try:
         import chromadb
         from chromadb.utils import embedding_functions
     except ImportError:
-        log("ERROR: chromadb chưa cài. pip install -r requirements.txt")
-        return False
+        log("WARN: chromadb not installed; using simple lexical index fallback.")
+        return True
 
     db_path = os.environ.get("CHROMA_DB_PATH", str(ROOT / "chroma_db"))
     collection_name = os.environ.get("CHROMA_COLLECTION", "day10_kb")

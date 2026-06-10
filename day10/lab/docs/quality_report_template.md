@@ -1,48 +1,44 @@
-# Quality report — Lab Day 10 (nhóm)
+# Quality Report - Lab Day 10
 
-**run_id:** _______________  
-**Ngày:** _______________
+**run_id:** `day10-final`  
+**Date:** 2026-06-10  
+**Inject run:** `inject-bad`
 
----
+## 1. Data Summary
 
-## 1. Tóm tắt số liệu
+| Metric | Before / inject | After | Notes |
+|---|---:|---:|---|
+| raw_records | 247 | 247 | Same source CSV. |
+| cleaned_records | 37 | 37 | Cleaning keeps the same clean volume after refund inject because inject disables text fix only. |
+| quarantine_records | 210 | 210 | Final reasons include stale HR, invalid exported_at, ambiguous content, duplicates, and unknown docs. |
+| Expectation halt? | yes | no | Inject fails `refund_no_stale_14d_window`; final run passes all halt expectations. |
 
-| Chỉ số | Trước | Sau | Ghi chú |
-|--------|-------|-----|---------|
-| raw_records | | | |
-| cleaned_records | | | |
-| quarantine_records | | | |
-| Expectation halt? | | | |
+## 2. Before / After Retrieval
 
----
+Evidence files:
 
-## 2. Before / after retrieval (bắt buộc)
+- `artifacts/eval/after_inject_bad.csv`
+- `artifacts/eval/after_fix_eval.csv`
+- `artifacts/eval/grading_run.jsonl`
 
-> Đính kèm hoặc dẫn link tới `artifacts/eval/before_after_eval.csv` (hoặc 2 file before/after).
+Key row: `q_refund_window`
 
-**Câu hỏi then chốt:** refund window (`q_refund_window`)  
-**Trước:** (copy dòng CSV hoặc paste top-k)  
-**Sau:**
+| Run | top1_doc_id | contains_expected | hits_forbidden | top1_doc_expected |
+|---|---|---|---|---|
+| inject-bad | `policy_refund_v4` | yes | yes | yes |
+| day10-final | `policy_refund_v4` | yes | no | yes |
 
-**Merit (khuyến nghị):** versioning HR — `q_leave_version` (`contains_expected`, `hits_forbidden`, cột `top1_doc_expected`)
+The final eval also passes HR versioning and access-control retrieval: `q_hr_annual_leave_under3` top1 is `hr_leave_policy`, and `q_access_level4` top1 is `access_control_sop`.
 
-**Trước:**  
-**Sau:**
+## 3. Freshness and Monitor
 
----
+Freshness status for `day10-final` is `FAIL` because the newest sample export timestamp is `2026-04-11T00:00:00`, while the run date is 2026-06-10 and the SLA is 24 hours. This is expected for the static lab data and is documented as a data-snapshot freshness failure, not a pipeline execution failure.
 
-## 3. Freshness & monitor
+## 4. Corruption Inject
 
-> Kết quả `freshness_check` (PASS/WARN/FAIL) và giải thích SLA bạn chọn.
+The inject command was `uv run python etl_pipeline.py run --run-id inject-bad --no-refund-fix --skip-validate`. It intentionally published refund chunks without replacing the stale "14 ngay lam viec" window. The expectation suite detected 2 refund violations, and `after_inject_bad.csv` shows `hits_forbidden=yes` for `q_refund_window`.
 
----
+## 5. Limits and Follow-up
 
-## 4. Corruption inject (Sprint 3)
-
-> Mô tả cố ý làm hỏng dữ liệu kiểu gì (duplicate / stale / sai format) và cách phát hiện.
-
----
-
-## 5. Hạn chế & việc chưa làm
-
-- …
+- Chroma was unavailable in this workspace, so a standard-library lexical fallback index was used and documented in the manifest.
+- A production setup should provision Chroma and the SentenceTransformers model before scheduled runs.

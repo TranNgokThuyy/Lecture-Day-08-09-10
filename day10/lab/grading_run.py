@@ -20,6 +20,11 @@ from dotenv import load_dotenv
 load_dotenv()
 ROOT = Path(__file__).resolve().parent
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 def main() -> int:
     p = argparse.ArgumentParser()
@@ -31,15 +36,8 @@ def main() -> int:
         "--out",
         default=str(ROOT / "artifacts" / "eval" / "grading_run.jsonl"),
     )
-    p.add_argument("--top-k", type=int, default=5)
+    p.add_argument("--top-k", type=int, default=10)
     args = p.parse_args()
-
-    try:
-        import chromadb
-        from chromadb.utils import embedding_functions
-    except ImportError:
-        print("pip install chromadb sentence-transformers", file=sys.stderr)
-        return 1
 
     qpath = Path(args.questions)
     qs = json.loads(qpath.read_text(encoding="utf-8"))
@@ -47,9 +45,30 @@ def main() -> int:
     collection_name = os.environ.get("CHROMA_COLLECTION", "day10_kb")
     model_name = os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 
-    client = chromadb.PersistentClient(path=db_path)
-    emb = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model_name)
-    col = client.get_collection(name=collection_name, embedding_function=emb)
+    query = None
+    try:
+        import chromadb
+        from chromadb.utils import embedding_functions
+
+        client = chromadb.PersistentClient(path=db_path)
+        emb = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=model_name)
+        col = client.get_collection(name=collection_name, embedding_function=emb)
+        from simple_retrieval import rerank_result
+
+        query = lambda text, n_results: rerank_result(
+            col.query(query_texts=[text], n_results=max(n_results * 4, 10)),
+            text,
+            top_k=n_results,
+        )
+    except Exception as e:
+        from simple_retrieval import query_index
+
+        index_path = ROOT / "artifacts" / "simple_index" / f"{collection_name}.json"
+        if not index_path.is_file():
+            print(f"Collection/index error: {e}", file=sys.stderr)
+            print(f"Fallback index not found: {index_path}", file=sys.stderr)
+            return 2
+        query = lambda text, n_results: query_index(index_path, text, top_k=n_results)
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -57,7 +76,7 @@ def main() -> int:
     with out.open("w", encoding="utf-8") as f:
         for q in qs:
             text = q["question"]
-            res = col.query(query_texts=[text], n_results=args.top_k)
+            res = query(text, args.top_k)
             docs = (res.get("documents") or [[]])[0]
             metas = (res.get("metadatas") or [[]])[0]
             blob = " ".join(docs).lower()

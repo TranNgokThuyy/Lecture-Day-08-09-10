@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
 
@@ -17,6 +18,28 @@ class ExpectationResult:
     passed: bool
     severity: str  # "warn" | "halt"
     detail: str
+
+
+REQUIRED_DOC_IDS = frozenset(
+    {
+        "policy_refund_v4",
+        "sla_p1_2026",
+        "it_helpdesk_faq",
+        "hr_leave_policy",
+        "access_control_sop",
+    }
+)
+
+
+def _parseable_iso_datetime(raw: str) -> bool:
+    s = (raw or "").strip()
+    if not s:
+        return False
+    try:
+        datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return True
+    except ValueError:
+        return False
 
 
 def run_expectations(cleaned_rows: List[Dict[str, Any]]) -> Tuple[List[ExpectationResult], bool]:
@@ -109,6 +132,47 @@ def run_expectations(cleaned_rows: List[Dict[str, Any]]) -> Tuple[List[Expectati
             ok6,
             "halt",
             f"violations={len(bad_hr_annual)}",
+        )
+    )
+
+    # E7: all canonical docs needed by grading are represented after cleaning.
+    present = {r.get("doc_id") for r in cleaned_rows if r.get("doc_id")}
+    missing_required = sorted(REQUIRED_DOC_IDS - present)
+    ok7 = len(missing_required) == 0
+    results.append(
+        ExpectationResult(
+            "required_doc_ids_present",
+            ok7,
+            "halt",
+            f"missing={missing_required}",
+        )
+    )
+
+    # E8: ambiguous placeholder content must not be published into the vector index.
+    ambiguous = [
+        r
+        for r in cleaned_rows
+        if (r.get("chunk_text") or "").strip().lower().startswith("nội dung không rõ ràng")
+    ]
+    ok8 = len(ambiguous) == 0
+    results.append(
+        ExpectationResult(
+            "no_ambiguous_content",
+            ok8,
+            "halt",
+            f"ambiguous_chunks={len(ambiguous)}",
+        )
+    )
+
+    # E9: exported_at is usable for freshness and manifest lineage.
+    bad_exported_at = [r for r in cleaned_rows if not _parseable_iso_datetime(r.get("exported_at") or "")]
+    ok9 = len(bad_exported_at) == 0
+    results.append(
+        ExpectationResult(
+            "exported_at_parseable_iso",
+            ok9,
+            "halt",
+            f"bad_exported_at_rows={len(bad_exported_at)}",
         )
     )
 
